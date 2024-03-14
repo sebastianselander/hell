@@ -1,0 +1,39 @@
+cabal-version:   3.0
+name:            hell
+version:         0.1.0.0
+
+-- synopsis:
+-- description:
+license:         MIT
+license-file:    LICENSE
+author:          sebastianselander
+maintainer:      sebastian.selander@gmail.com
+
+-- copyright:
+category:        Language
+build-type:      Simple
+extra-doc-files: CHANGELOG.md
+
+-- extra-source-files:
+
+common warnings
+  ghc-options: -Wall -Wextra
+
+executable hell
+  import:           warnings
+  main-is:          Main.hs
+  other-modules:
+    Builtin
+    Parser
+    Shell
+    Util
+
+  -- other-extensions:
+  build-depends:
+    , base    >=4.17
+    , mtl
+    , parsec
+    , unix
+
+  hs-source-dirs:   app
+  default-language: GHC2021
