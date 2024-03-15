@@ -1,5 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Shell where
@@ -7,6 +9,8 @@ module Shell where
 import Control.Monad.State
 import Control.Monad.Writer
 import Data.Map qualified as Map
+import Data.Text (Text, init, isSuffixOf, unpack)
+import Data.Text.IO (getLine)
 import GHC.IO.Handle.Text (hPutStrLn)
 import Parser (term)
 import System.Directory (doesDirectoryExist)
@@ -15,7 +19,15 @@ import System.IO (hFlush, stderr, stdout)
 import System.Posix
 import Types
 import Util
-import Prelude hiding (log)
+import Prelude hiding (getLine, init, log)
+
+{-
+TODO:
+    - Reduce the amount of unpacks necessary by creating own versions.
+    - Lenses
+    - Other prelude?
+    - Effect system?
+-}
 
 runShell :: Env a -> IO a
 runShell =
@@ -33,13 +45,25 @@ shell = do
         line <- shellGetInput
         case term line of
             Left e -> liftIO $ putStrLn e
-            Right t -> liftIO (print t) >> interpret t
+            Right t -> interpret t
         loop
 
-shellGetInput :: Env String
+shellGetInput :: Env Text
 shellGetInput = do
-    line <- getLine
-    undefined
+    liftIO $ continue =<< getLine
+  where
+    continue :: Text -> IO Text
+    continue s = do
+        if
+            | "\\" `isSuffixOf` s -> do
+                putStr "> " >> hFlush stdout
+                s' <- getLine
+                continue (init s <> s')
+            | "&&" `isSuffixOf` s || "|" `isSuffixOf` s -> do
+                putStr "> " >> hFlush stdout
+                s' <- getLine
+                continue (s <> s')
+            | otherwise -> return s
 
 prompt :: Env ()
 prompt = do
@@ -107,7 +131,8 @@ interpret = \case
         code <- getExitCode
         onSuccess code (interpret r)
     TPipe l r -> TODO
-    TBang l -> log "bang" >> interpret l >>  negateExitCode
+        
+    TBang l -> log "bang" >> interpret l >> negateExitCode
     TSub l -> do
         st <- get
         log "sub"
@@ -121,23 +146,25 @@ external = \case
     TCommand command as -> do
         as' <- args as
         vars <- gets variables
-        let run = executeFile command True as' (Just (Map.toList vars))
+        let run = executeFile (unpack command) True as' (Just (Map.toList vars))
         pid <- liftIO $ forkProcess run
-        let wait = do
-                status <- liftIO $ getProcessStatus False True pid
-                maybe wait return status
-        status <- wait
+        status <- wait pid
         case status of
             Exited code -> setExitCode code
             Terminated sig _codeDumped ->
                 err $ "child: terminated with " <> show sig
             Stopped sig -> err $ "child: stopped with " <> show sig
 
+wait :: ProcessID -> Env ProcessStatus
+wait pid = do
+    status <- liftIO $ getProcessStatus False True pid
+    maybe (wait pid) return status
+
 args :: [Arg] -> Env [String]
 args = mapM eval
   where
     eval :: Arg -> Env String
-    eval (AIdent str) = return str
+    eval (AIdent str) = return (unpack str)
     eval (ASub term) = TODO
 
 builtin :: Builtin -> Env ()
@@ -145,9 +172,9 @@ builtin = \case
     TCd [] -> getVar "HOME" >>= success . changeWorkingDirectory
     TCd [ASub _] -> TODO
     TCd [AIdent arg] -> do
-        liftIO (doesDirectoryExist arg) >>= \case
+        liftIO (doesDirectoryExist (unpack arg)) >>= \case
             False -> err "cd: No such file or directory"
-            True -> success $ changeWorkingDirectory arg
+            True -> success $ changeWorkingDirectory (unpack arg)
     TCd ((_ : _)) -> err "cd: too many arguments"
     TPwd args
         | isEmpty args -> success (getWorkingDirectory >>= putStrLn)

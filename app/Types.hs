@@ -9,6 +9,7 @@ import Text.Parsec.Expr (OperatorTable)
 import Text.Parsec (Parsec)
 import Data.Functor.Identity (Identity)
 import System.Exit (ExitCode(..))
+import Data.Text (Text)
 
 data Shell = Shell
     { exitCode :: ExitCode
@@ -21,7 +22,7 @@ data Shell = Shell
 newtype Env a = Env {runEnv :: StateT Shell (WriterT [String] IO) a}
     deriving (Functor, Applicative, Monad, MonadState Shell, MonadWriter [String], MonadIO)
 
-type Ident = String
+type Ident = Text
 
 data Term
     = Empty
@@ -47,5 +48,5 @@ data Builtin
 data Arg = AIdent !Ident | ASub !Term
     deriving (Show, Eq, Ord)
 
-type Parser a = Parsec String () a
-type Table a = OperatorTable String () Identity a
+type Parser a = Parsec Text () a
+type Table a = OperatorTable Text () Identity a

@@ -26,18 +26,20 @@ executable hell
     Builtin
     Parser
     Shell
-    Util
     Types
+    Util
 
   -- other-extensions:
   build-depends:
-    , base    >=4.17
-    , mtl
-    , parsec
-    , unix
+    , ansi-terminal
+    , base           >=4.17
     , containers
     , directory
-    , ansi-terminal
+    , mtl
+    , parsec
+    , text
+    , unix
+    , process
 
   hs-source-dirs:   app
   default-language: GHC2021
