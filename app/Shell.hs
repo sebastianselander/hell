@@ -1,43 +1,93 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Shell where
 
 import Control.Monad.State
 import Control.Monad.Writer
-import Parser
+import Data.Map qualified as Map
+import GHC.IO.Handle.Text (hPutStrLn)
+import Parser (term)
+import System.Directory (doesDirectoryExist)
+import System.Exit
+import System.IO (hFlush, stderr, stdout)
+import System.Posix
+import Types
 import Util
 import Prelude hiding (log)
 
-data ExitCode = EXIT_FAILURE | EXIT_SUCCESS
-    deriving (Show)
+runShell :: Env a -> IO a
+runShell =
+    fmap fst
+        . runWriterT
+        . flip evalStateT (error "Shell not initialised")
+        . runEnv
+shell :: Env ()
+shell = do
+    initShell
+    loop
+  where
+    loop = do
+        prompt
+        line <- shellGetInput
+        case term line of
+            Left e -> liftIO $ putStrLn e
+            Right t -> liftIO (print t) >> interpret t
+        loop
 
-data Shell = Shell
-    { exitCode :: ExitCode
-    , currentDirectory :: FilePath
-    , previousDirectory :: FilePath
-    }
-    deriving (Show)
+shellGetInput :: Env String
+shellGetInput = do
+    line <- getLine
+    undefined
 
-newtype Env a = Env {runEnv :: StateT Shell (WriterT [String] IO) a}
-    deriving (Functor, Applicative, Monad, MonadState Shell, MonadWriter [String], MonadIO)
+prompt :: Env ()
+prompt = do
+    getExitCode >>= \case
+        ExitSuccess -> setGreen
+        ExitFailure _ -> setRed
+    liftIO $ putStr "\n$ "
+    setReset
+    liftIO $ hFlush stdout
+
+resetTo :: Shell -> Env ()
+resetTo sh = liftIO $ changeWorkingDirectory sh.currentDirectory
+
+getVar :: String -> Env String
+getVar str = gets (Map.findWithDefault "" str . variables)
+
+initShell :: Env ()
+initShell = do
+    dir <- liftIO getWorkingDirectory
+    variables <- Map.fromList <$> liftIO getEnvironment
+    put
+        ( Shell
+            { exitCode = ExitSuccess
+            , currentDirectory = dir
+            , previousDirectory = dir
+            , variables = variables
+            }
+        )
 
 getExitCode :: Env ExitCode
 getExitCode = gets exitCode
 
+setExitCode :: ExitCode -> Env ()
+setExitCode code = modify (\sh -> sh{exitCode = code})
+
 negateExitCode :: Env ()
-negateExitCode = modify (\shell -> shell{exitCode = flipCode shell.exitCode})
+negateExitCode = modify (\sh -> sh{exitCode = flipCode sh.exitCode})
   where
-    flipCode EXIT_SUCCESS = EXIT_FAILURE
-    flipCode _ = EXIT_SUCCESS
+    flipCode ExitSuccess = ExitFailure 1
+    flipCode _ = ExitSuccess
 
 onSuccess :: ExitCode -> Env () -> Env ()
-onSuccess EXIT_SUCCESS ma = ma
-onSuccess EXIT_FAILURE _ = return ()
+onSuccess ExitSuccess ma = ma
+onSuccess (ExitFailure _) _ = return ()
 
 onFailure :: ExitCode -> Env () -> Env ()
-onFailure EXIT_FAILURE ma = ma
-onFailure EXIT_SUCCESS _ = return ()
+onFailure (ExitFailure _) ma = ma
+onFailure ExitSuccess _ = return ()
 
 log :: String -> Env ()
 log s = tell [s]
@@ -45,40 +95,90 @@ log s = tell [s]
 interpret :: Term -> Env ()
 interpret = \case
     Empty -> return ()
-    TSeq l r -> interpret l >> log "sequence" >> interpret r
+    TSeq l r -> log "sequence" >> interpret l >> interpret r
     TOr l r -> do
         interpret l
         log "or"
         code <- getExitCode
         onFailure code (interpret r)
     TAnd l r -> do
-        interpret l
         log "and"
+        interpret l
         code <- getExitCode
         onSuccess code (interpret r)
     TPipe l r -> TODO
-    TBang l -> interpret l >> log "bang" >> negateExitCode
+    TBang l -> log "bang" >> interpret l >>  negateExitCode
     TSub l -> do
         st <- get
-        interpret l
         log "sub"
-        put st
-    TExternal external -> undefined
-    TBuiltin builtin -> TODO
+        interpret l
+        resetTo st
+    TExternal command -> log "external" >> external command
+    TBuiltin command -> log "builtin" >> builtin command
+
+external :: External -> Env ()
+external = \case
+    TCommand command as -> do
+        as' <- args as
+        vars <- gets variables
+        let run = executeFile command True as' (Just (Map.toList vars))
+        pid <- liftIO $ forkProcess run
+        let wait = do
+                status <- liftIO $ getProcessStatus False True pid
+                maybe wait return status
+        status <- wait
+        case status of
+            Exited code -> setExitCode code
+            Terminated sig _codeDumped ->
+                err $ "child: terminated with " <> show sig
+            Stopped sig -> err $ "child: stopped with " <> show sig
+
+args :: [Arg] -> Env [String]
+args = mapM eval
+  where
+    eval :: Arg -> Env String
+    eval (AIdent str) = return str
+    eval (ASub term) = TODO
 
 builtin :: Builtin -> Env ()
 builtin = \case
-    TCd args -> undefined
-    TExit args | isEmpty args -> undefined
-    THelp args -> undefined
+    TCd [] -> getVar "HOME" >>= success . changeWorkingDirectory
+    TCd [ASub _] -> TODO
+    TCd [AIdent arg] -> do
+        liftIO (doesDirectoryExist arg) >>= \case
+            False -> err "cd: No such file or directory"
+            True -> success $ changeWorkingDirectory arg
+    TCd ((_ : _)) -> err "cd: too many arguments"
+    TPwd args
+        | isEmpty args -> success (getWorkingDirectory >>= putStrLn)
+        | otherwise -> err "pwd: too many arguments"
+    TExit args
+        | isEmpty args -> exitShell
+        | otherwise -> err "exit: too many arguments"
+
+exitShell :: Env ()
+exitShell = liftIO exitSuccess
+
+success :: IO a -> Env a
+success ma = do
+    setExitCode ExitSuccess
+    liftIO ma
+
+class Error a where
+    err :: String -> Env a
 
 class IsEmpty a where
     isEmpty :: a -> Bool
+
+instance (Monoid a) => Error a where
+    err str = do
+        setExitCode (ExitFailure 1)
+        liftIO (hPutStrLn stderr str >> return mempty)
 
 instance IsEmpty Term where
     isEmpty Empty = True
     isEmpty _ = False
 
-instance IsEmpty Args where
-    isEmpty (AList []) = True
+instance IsEmpty [a] where
+    isEmpty [] = True
     isEmpty _ = False
