@@ -20,6 +20,7 @@ import System.Posix
 import Types
 import Util
 import Prelude hiding (getLine, init, log)
+import System.Process (proc, createProcess, waitForProcess)
 
 {-
 TODO:
@@ -146,14 +147,19 @@ external = \case
     TCommand command as -> do
         as' <- args as
         vars <- gets variables
-        let run = executeFile (unpack command) True as' (Just (Map.toList vars))
-        pid <- liftIO $ forkProcess run
-        status <- wait pid
-        case status of
-            Exited code -> setExitCode code
-            Terminated sig _codeDumped ->
-                err $ "child: terminated with " <> show sig
-            Stopped sig -> err $ "child: stopped with " <> show sig
+        let cmd = proc (unpack command) as'
+        (hStdin, hStdout, hStderr, ph) <- liftIO $ createProcess cmd
+        code <- liftIO $ waitForProcess ph
+        setExitCode code
+        return ()
+        -- let run = executeFile (unpack command) True as' (Just (Map.toList vars))
+        -- pid <- liftIO $ forkProcess run
+        -- status <- wait pid
+        -- case status of
+        --     Exited code -> setExitCode code
+        --     Terminated sig _codeDumped ->
+        --         err $ "child: terminated with " <> show sig
+        --     Stopped sig -> err $ "child: stopped with " <> show sig
 
 wait :: ProcessID -> Env ProcessStatus
 wait pid = do
