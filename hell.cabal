@@ -23,7 +23,6 @@ executable hell
   import:           warnings
   main-is:          Main.hs
   other-modules:
-    Builtin
     Parser
     Shell
     Types
