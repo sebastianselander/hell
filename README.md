@@ -1,6 +1,7 @@
 # Hell
 
-A shell (again..) written in Haskell. 
+A shell (again...) written in Haskell.
+
 Thanks to the superior language it's the better version of [kjell](https://github.com/sebastianselander/kjell).
 
 # Implemented
