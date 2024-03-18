@@ -11,11 +11,6 @@ pattern TODO :: a
 pattern TODO <- _
   where TODO = error "TODO: Not yet implemented"
 
-unlessM :: IO Bool -> Env () -> Env ()
-unlessM ib a = do
-    b <- liftIO ib
-    unless b a
-
 setColor :: Color -> Env ()
 setColor col = liftIO $ setSGR [SetColor Foreground Dull col]
 
