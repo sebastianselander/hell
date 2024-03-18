@@ -31,7 +31,7 @@ pSubshell :: Parser Term
 pSubshell = char '(' *> (TSub <$> pTerm) <* char ')'
 
 pExternal :: Parser Term
-pExternal = TExternal <$> (External <$> lexeme anyString <*> pArgs <*> return No)
+pExternal = TExternal <$> (External <$> lexeme anyString <*> pArgs)
 
 pBuiltin :: Parser Term
 pBuiltin = TBuiltin <$> choice [try pCd, try pExit, try pPwd]
