@@ -15,7 +15,8 @@ setColor :: Color -> Env ()
 setColor col = liftIO $ setSGR [SetColor Foreground Dull col]
 
 setGreen, setRed :: Env ()
-(setGreen, setRed) = (setColor Green, setColor Red)
+setGreen = setColor Green
+setRed = setColor Red
 
 setReset :: Env ()
 setReset = liftIO $ setSGR [Reset, SetDefaultColor Foreground]
