@@ -1,15 +1,17 @@
 {-# LANGUAGE UndecidableInstances #-}
+
 module Types where
 
-import Data.Map (Map)
-import Control.Monad.State (StateT, MonadState)
-import Control.Monad.Writer (WriterT, MonadWriter)
 import Control.Monad.IO.Class (MonadIO)
-import Text.Parsec.Expr (OperatorTable)
-import Text.Parsec (Parsec)
+import Control.Monad.State (MonadState, StateT)
+import Control.Monad.Writer (MonadWriter, WriterT)
 import Data.Functor.Identity (Identity)
-import System.Exit (ExitCode(..))
+import Data.Map (Map)
 import Data.Text (Text)
+import System.Exit (ExitCode (..))
+import System.IO (Handle)
+import Text.Parsec (Parsec)
+import Text.Parsec.Expr (OperatorTable)
 
 data Shell = Shell
     { exitCode :: ExitCode
@@ -34,18 +36,26 @@ data Term
     | TSub !Term
     | TExternal !External
     | TBuiltin !Builtin
-    deriving (Show, Eq, Ord)
+    deriving (Show, Eq)
 
+data Handles = Handles
+    { std_in :: !Handle
+    , std_out :: !Handle
+    , std_err :: !Handle
+    }
+    deriving (Show, Eq)
 
+data External = External !Ident ![Arg]
+    deriving (Show, Eq)
 
 data Builtin
     = TCd ![Arg]
     | TExit ![Arg]
     | TPwd ![Arg]
-    deriving (Show, Eq, Ord)
+    deriving (Show, Eq)
 
 data Arg = AIdent !Ident | ASub !Term
-    deriving (Show, Eq, Ord)
+    deriving (Show, Eq)
 
 type Parser a = Parsec Text () a
 type Table a = OperatorTable Text () Identity a

@@ -15,12 +15,13 @@ import Data.Text.IO (getLine, hPutStrLn)
 import Parser (term)
 import System.Directory (doesDirectoryExist)
 import System.Exit
-import System.IO (hFlush, stderr, stdout)
+import System.IO (hFlush, stderr, stdout, stdin)
 import System.Posix
 import System.Process
 import Types
 import Util
 import Prelude hiding (getLine, init, log)
+import Data.Maybe (fromMaybe)
 
 {-
 TODO:
@@ -29,6 +30,9 @@ TODO:
     - Other prelude?
     - Effect system?
 -}
+
+defaultHandles :: Handles
+defaultHandles = Handles stdin stdout stderr 
 
 runShell :: Env a -> IO a
 runShell =
@@ -46,7 +50,7 @@ shell = do
         line <- shellGetInput
         case term line of
             Left e -> liftIO $ putStrLn e
-            Right t -> liftIO (print t) >> interpret t
+            Right t -> liftIO (print t) >> void (interpret t)
         loop
 
 shellGetInput :: Env Text
@@ -106,62 +110,62 @@ negateExitCode = modify (\sh -> sh{exitCode = flipCode sh.exitCode})
     flipCode ExitSuccess = ExitFailure 1
     flipCode _ = ExitSuccess
 
-onSuccess :: ExitCode -> Env () -> Env ()
-onSuccess ExitSuccess ma = ma
+onSuccess :: ExitCode -> Env a -> Env ()
+onSuccess ExitSuccess ma = void ma
 onSuccess (ExitFailure _) _ = return ()
 
-onFailure :: ExitCode -> Env () -> Env ()
-onFailure (ExitFailure _) ma = ma
+onFailure :: ExitCode -> Env a -> Env ()
+onFailure (ExitFailure _) ma = void ma
 onFailure ExitSuccess _ = return ()
 
 log :: String -> Env ()
 log s = tell [s]
 
-interpret :: Term -> Env ()
+interpret :: Term -> Env Handles
 interpret = \case
-    Empty -> return ()
+    Empty -> return defaultHandles
     TSeq l r -> log "sequence" >> interpret l >> interpret r
     TOr l r -> do
-        interpret l
         log "or"
+        handles <- interpret l
         code <- getExitCode
         onFailure code (interpret r)
+        return handles
     TAnd l r -> do
         log "and"
-        interpret l
+        handles <- interpret l
         code <- getExitCode
         onSuccess code (interpret r)
-    TPipe l r -> TODO
-    TBang l -> log "bang" >> interpret l >> negateExitCode
+        return handles
+    TPipe l r -> do
+        TODO
+    TBang l -> do
+        log "bang" 
+        handles <- interpret l 
+        negateExitCode 
+        return handles
     TSub l -> do
         st <- get
         log "sub"
-        interpret l
+        handles <- interpret l
         resetTo st
+        return handles
     TExternal command -> log "external" >> external command
-    TBuiltin command -> log "builtin" >> builtin command
+    TBuiltin command -> log "builtin" >> builtin command >> return defaultHandles
 
-external :: External -> Env ()
+external :: External -> Env Handles
 external = \case
-    External command as inPipe -> do
+    External command as -> do
         as' <- evalArgs as
         let cmd = proc (unpack command) as'
-        mby <-
-            liftIO $
-                catch @IOException
-                    (Just <$> createProcess cmd)
-                    (const (return Nothing))
+        mby <- catchIO $ createProcess cmd
         case mby of
-            Nothing -> err (command <> ": command not found")
-            Just (_, _, _, processHandle) -> do
+            -- TODO: Make the type application unnecessary
+            Nothing -> err @() (command <> ": command not found") >> return defaultHandles
+            Just (in_handle, out_handle, err_handle, processHandle) -> do
                 code <- liftIO $ waitForProcess processHandle
                 setExitCode code
-                return ()
-
-wait :: ProcessID -> Env ProcessStatus
-wait pid = do
-    status <- liftIO $ getProcessStatus False True pid
-    maybe (wait pid) return status
+                return (Handles (fromMaybe stdin in_handle) (fromMaybe stdout out_handle) (fromMaybe stderr err_handle))
 
 evalArgs :: [Arg] -> Env [String]
 evalArgs = mapM eval
@@ -207,10 +211,6 @@ instance (Monoid a) => Error a where
     err str = do
         setExitCode (ExitFailure 1)
         liftIO (hPutStrLn stderr str >> return mempty)
-
-instance IsEmpty Term where
-    isEmpty Empty = True
-    isEmpty _ = False
 
 instance IsEmpty [a] where
     isEmpty [] = True
