@@ -3,10 +3,10 @@
 module Util where
 
 import Types
-import Control.Monad (unless)
 import Control.Monad.IO.Class (liftIO)
 import System.Console.ANSI
 
+{-# WARNING TODO "TODO IN CODE" #-}
 pattern TODO :: a
 pattern TODO <- _
   where TODO = error "TODO: Not yet implemented"
