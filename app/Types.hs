@@ -36,7 +36,10 @@ data Term
     | TBuiltin !Builtin
     deriving (Show, Eq, Ord)
 
-data External = TCommand !Ident ![Arg]
+data InPipe = StdIn | StdOut | No
+    deriving (Show, Eq, Ord)
+
+data External = External !Ident ![Arg] !InPipe
     deriving (Show, Eq, Ord)
 
 data Builtin

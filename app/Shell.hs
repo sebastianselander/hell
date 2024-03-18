@@ -6,21 +6,21 @@
 
 module Shell where
 
+import Control.Exception (IOException, catch)
 import Control.Monad.State
 import Control.Monad.Writer
 import Data.Map qualified as Map
 import Data.Text (Text, init, isSuffixOf, unpack)
-import Data.Text.IO (getLine)
-import GHC.IO.Handle.Text (hPutStrLn)
+import Data.Text.IO (getLine, hPutStrLn)
 import Parser (term)
 import System.Directory (doesDirectoryExist)
 import System.Exit
 import System.IO (hFlush, stderr, stdout)
 import System.Posix
+import System.Process
 import Types
 import Util
 import Prelude hiding (getLine, init, log)
-import System.Process (proc, createProcess, waitForProcess)
 
 {-
 TODO:
@@ -46,7 +46,7 @@ shell = do
         line <- shellGetInput
         case term line of
             Left e -> liftIO $ putStrLn e
-            Right t -> interpret t
+            Right t -> liftIO (print t) >> interpret t
         loop
 
 shellGetInput :: Env Text
@@ -132,7 +132,6 @@ interpret = \case
         code <- getExitCode
         onSuccess code (interpret r)
     TPipe l r -> TODO
-        
     TBang l -> log "bang" >> interpret l >> negateExitCode
     TSub l -> do
         st <- get
@@ -144,34 +143,32 @@ interpret = \case
 
 external :: External -> Env ()
 external = \case
-    TCommand command as -> do
-        as' <- args as
-        vars <- gets variables
+    External command as inPipe -> do
+        as' <- evalArgs as
         let cmd = proc (unpack command) as'
-        (hStdin, hStdout, hStderr, ph) <- liftIO $ createProcess cmd
-        code <- liftIO $ waitForProcess ph
-        setExitCode code
-        return ()
-        -- let run = executeFile (unpack command) True as' (Just (Map.toList vars))
-        -- pid <- liftIO $ forkProcess run
-        -- status <- wait pid
-        -- case status of
-        --     Exited code -> setExitCode code
-        --     Terminated sig _codeDumped ->
-        --         err $ "child: terminated with " <> show sig
-        --     Stopped sig -> err $ "child: stopped with " <> show sig
+        mby <-
+            liftIO $
+                catch @IOException
+                    (Just <$> createProcess cmd)
+                    (const (return Nothing))
+        case mby of
+            Nothing -> err (command <> ": command not found")
+            Just (_, _, _, processHandle) -> do
+                code <- liftIO $ waitForProcess processHandle
+                setExitCode code
+                return ()
 
 wait :: ProcessID -> Env ProcessStatus
 wait pid = do
     status <- liftIO $ getProcessStatus False True pid
     maybe (wait pid) return status
 
-args :: [Arg] -> Env [String]
-args = mapM eval
+evalArgs :: [Arg] -> Env [String]
+evalArgs = mapM eval
   where
     eval :: Arg -> Env String
     eval (AIdent str) = return (unpack str)
-    eval (ASub term) = TODO
+    eval (ASub _) = TODO
 
 builtin :: Builtin -> Env ()
 builtin = \case
@@ -192,13 +189,16 @@ builtin = \case
 exitShell :: Env ()
 exitShell = liftIO exitSuccess
 
+catchIO :: IO a -> Env (Maybe a)
+catchIO ma = liftIO $ catch @IOException (Just <$> ma) (const (return Nothing))
+
 success :: IO a -> Env a
 success ma = do
     setExitCode ExitSuccess
     liftIO ma
 
 class Error a where
-    err :: String -> Env a
+    err :: Text -> Env a
 
 class IsEmpty a where
     isEmpty :: a -> Bool
