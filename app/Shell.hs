@@ -10,18 +10,18 @@ import Control.Exception (IOException, catch)
 import Control.Monad.State
 import Control.Monad.Writer
 import Data.Map qualified as Map
+import Data.Maybe (fromMaybe)
 import Data.Text (Text, init, isSuffixOf, unpack)
 import Data.Text.IO (getLine, hPutStrLn)
 import Parser (term)
 import System.Directory (doesDirectoryExist)
 import System.Exit
-import System.IO (hFlush, stderr, stdout, stdin)
-import System.Posix
+import System.IO (hFlush, stderr, stdin, stdout)
+import System.Posix hiding (createPipe)
 import System.Process
 import Types
 import Util
 import Prelude hiding (getLine, init, log)
-import Data.Maybe (fromMaybe)
 
 {-
 TODO:
@@ -32,7 +32,7 @@ TODO:
 -}
 
 defaultHandles :: Handles
-defaultHandles = Handles stdin stdout stderr 
+defaultHandles = Handles stdin stdout stderr
 
 runShell :: Env a -> IO a
 runShell =
@@ -95,6 +95,7 @@ initShell = do
             , currentDirectory = dir
             , previousDirectory = dir
             , variables = variables
+            , handles = defaultHandles
             }
         )
 
@@ -110,13 +111,13 @@ negateExitCode = modify (\sh -> sh{exitCode = flipCode sh.exitCode})
     flipCode ExitSuccess = ExitFailure 1
     flipCode _ = ExitSuccess
 
-onSuccess :: ExitCode -> Env a -> Env ()
-onSuccess ExitSuccess ma = void ma
-onSuccess (ExitFailure _) _ = return ()
+onSuccess :: a -> ExitCode -> Env a -> Env a
+onSuccess _ ExitSuccess ma = ma
+onSuccess a (ExitFailure _) _ = return a
 
-onFailure :: ExitCode -> Env a -> Env ()
-onFailure (ExitFailure _) ma = void ma
-onFailure ExitSuccess _ = return ()
+onFailure :: a -> ExitCode -> Env a -> Env a
+onFailure _ (ExitFailure _) ma = ma
+onFailure a ExitSuccess _ = return a
 
 log :: String -> Env ()
 log s = tell [s]
@@ -129,25 +130,29 @@ interpret = \case
         log "or"
         handles <- interpret l
         code <- getExitCode
-        onFailure code (interpret r)
-        return handles
+        onFailure handles code (interpret r)
     TAnd l r -> do
         log "and"
         handles <- interpret l
         code <- getExitCode
-        onSuccess code (interpret r)
-        return handles
+        onSuccess handles code (interpret r)
     TPipe l r -> do
-        TODO
-    TBang l -> do
-        log "bang" 
-        handles <- interpret l 
-        negateExitCode 
+        (readEnd, writeEnd) <- liftIO createPipe
+        modify (\s -> s{handles = s.handles{handles_stdout = writeEnd}})
+        handles <- interpret l
+        modify (\s -> s{handles = handles{handles_stdin = readEnd}})
+        _ <- interpret r
+        modify (\s -> s{handles = defaultHandles})
+        return defaultHandles
+    TBang bang -> do
+        log "bang"
+        handles <- interpret bang
+        negateExitCode
         return handles
-    TSub l -> do
+    TSub subshell -> do
         st <- get
         log "sub"
-        handles <- interpret l
+        handles <- interpret subshell
         resetTo st
         return handles
     TExternal command -> log "external" >> external command
@@ -156,9 +161,18 @@ interpret = \case
 external :: External -> Env Handles
 external = \case
     External command as -> do
+        handles <- gets handles
         as' <- evalArgs as
         let cmd = proc (unpack command) as'
-        mby <- catchIO $ createProcess cmd
+        mby <-
+            catchIO $
+                createProcess
+                    ( cmd
+                        { std_in = UseHandle handles.handles_stdin
+                        , std_out = UseHandle handles.handles_stdout
+                        , std_err = UseHandle handles.handles_stderr
+                        }
+                    )
         case mby of
             -- TODO: Make the type application unnecessary
             Nothing -> err @() (command <> ": command not found") >> return defaultHandles

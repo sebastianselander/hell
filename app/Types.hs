@@ -14,10 +14,11 @@ import Text.Parsec (Parsec)
 import Text.Parsec.Expr (OperatorTable)
 
 data Shell = Shell
-    { exitCode :: ExitCode
-    , currentDirectory :: FilePath
-    , previousDirectory :: FilePath
-    , variables :: Map String String
+    { exitCode :: !ExitCode
+    , currentDirectory :: !FilePath
+    , previousDirectory :: !FilePath
+    , variables :: !(Map String String)
+    , handles :: !Handles
     }
     deriving (Show)
 
@@ -39,9 +40,9 @@ data Term
     deriving (Show, Eq)
 
 data Handles = Handles
-    { std_in :: !Handle
-    , std_out :: !Handle
-    , std_err :: !Handle
+    { handles_stdin :: !Handle
+    , handles_stdout :: !Handle
+    , handles_stderr :: !Handle
     }
     deriving (Show, Eq)
 
