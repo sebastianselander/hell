@@ -1,9 +1,9 @@
 module Parser where
 
+import Data.Text (Text, pack)
 import Text.Parsec hiding (Empty)
 import Text.Parsec.Expr (Assoc (..), Operator (..), buildExpressionParser)
 import Types
-import Data.Text (Text, pack)
 
 lexeme :: Parser a -> Parser a
 lexeme p = spaces *> p <* spaces
@@ -31,7 +31,7 @@ pSubshell :: Parser Term
 pSubshell = char '(' *> (TSub <$> pTerm) <* char ')'
 
 pExternal :: Parser Term
-pExternal = TExternal <$> (TCommand <$> lexeme anyString <*> pArgs)
+pExternal = TExternal <$> (External <$> lexeme anyString <*> pArgs <*> return No)
 
 pBuiltin :: Parser Term
 pBuiltin = TBuiltin <$> choice [try pCd, try pExit, try pPwd]
@@ -56,9 +56,11 @@ expr = buildExpressionParser table (lexeme pCommand)
             [ Prefix (TBang <$ char '!' <* space)
             ]
         ,
+            [ Infix (TPipe <$ try (char '|')) AssocLeft
+            ]
+        ,
             [ Infix (TOr <$ try (string "||")) AssocLeft
             , Infix (TAnd <$ try (string "&&")) AssocLeft
-            , Infix (TPipe <$ try (char '|')) AssocLeft
             , Infix (TSeq <$ try (char ';')) AssocLeft
             ]
         ]
