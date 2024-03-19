@@ -1,3 +1,4 @@
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE OverloadedRecordDot #-}
@@ -13,6 +14,8 @@ import Data.Map qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text, init, isSuffixOf, unpack)
 import Data.Text.IO (getLine, hPutStrLn)
+import Optics hiding (Empty)
+import Optics.State.Operators ((%=), (.=))
 import Parser (term)
 import System.Directory (doesDirectoryExist)
 import System.Exit
@@ -26,7 +29,6 @@ import Prelude hiding (getLine, init, log)
 {-
 TODO:
     - Reduce the amount of unpacks necessary by creating own versions.
-    - Lenses
     - Other prelude?
     - Effect system?
 -}
@@ -79,34 +81,35 @@ prompt = do
     setReset
     liftIO $ hFlush stdout
 
-resetTo :: Shell -> Env ()
-resetTo sh = liftIO $ changeWorkingDirectory sh.currentDirectory
+resetShellTo :: Shell -> Env ()
+resetShellTo = liftIO . changeWorkingDirectory . view currentDirectory
 
 getVar :: String -> Env String
-getVar str = gets (Map.findWithDefault "" str . variables)
+getVar str = gets (Map.findWithDefault "" str . _variables)
 
 initShell :: Env ()
 initShell = do
     dir <- liftIO getWorkingDirectory
-    variables <- Map.fromList <$> liftIO getEnvironment
+    vars <- Map.fromList <$> liftIO getEnvironment
     put
         ( Shell
-            { exitCode = ExitSuccess
-            , currentDirectory = dir
-            , previousDirectory = dir
-            , variables = variables
-            , handles = defaultHandles
+            { _exitCode = ExitSuccess
+            , _currentDirectory = dir
+            , _previousDirectory = dir
+            , _variables = vars
+            , _handles = defaultHandles
+            , _exit = False
             }
         )
 
 getExitCode :: Env ExitCode
-getExitCode = gets exitCode
+getExitCode = gets _exitCode
 
 setExitCode :: ExitCode -> Env ()
-setExitCode code = modify (\sh -> sh{exitCode = code})
+setExitCode code = exitCode %= const code
 
 negateExitCode :: Env ()
-negateExitCode = modify (\sh -> sh{exitCode = flipCode sh.exitCode})
+negateExitCode = exitCode %= flipCode
   where
     flipCode ExitSuccess = ExitFailure 1
     flipCode _ = ExitSuccess
@@ -128,49 +131,57 @@ interpret = \case
     TSeq l r -> log "sequence" >> interpret l >> interpret r
     TOr l r -> do
         log "or"
-        handles <- interpret l
+        hs <- interpret l
         code <- getExitCode
-        onFailure handles code (interpret r)
+        onFailure hs code (interpret r)
     TAnd l r -> do
         log "and"
-        handles <- interpret l
+        hs <- interpret l
         code <- getExitCode
-        onSuccess handles code (interpret r)
+        onSuccess hs code (interpret r)
     TPipe l r -> do
+        log "pipe"
         (readEnd, writeEnd) <- liftIO createPipe
-        modify (\s -> s{handles = s.handles{handles_stdout = writeEnd}})
-        handles <- interpret l
-        modify (\s -> s{handles = handles{handles_stdin = readEnd}})
-        _ <- interpret r
-        modify (\s -> s{handles = defaultHandles})
+        handles %= (hstd_out .~ writeEnd)
+        hs <- interpret l
+        liftIO $ hClose writeEnd
+        handles .= (hs & hstd_in .~ readEnd)
+        void (interpret r)
+        liftIO $ hClose readEnd
+        handles .= defaultHandles
         return defaultHandles
     TBang bang -> do
         log "bang"
-        handles <- interpret bang
+        hs <- interpret bang
         negateExitCode
-        return handles
+        return hs
     TSub subshell -> do
-        st <- get
         log "sub"
-        handles <- interpret subshell
-        resetTo st
-        return handles
-    TExternal command -> log "external" >> external command
-    TBuiltin command -> log "builtin" >> builtin command >> return defaultHandles
+        sh <- get
+        hs <- interpret subshell
+        resetShellTo sh
+        return hs
+    TExternal command -> do
+        log "external"
+        external command
+    TBuiltin command -> do
+        log "builtin"
+        builtin command
+        return defaultHandles
 
 external :: External -> Env Handles
 external = \case
     External command as -> do
-        handles <- gets handles
+        hs <- use handles
         as' <- evalArgs as
         let cmd = proc (unpack command) as'
         mby <-
             catchIO $
                 createProcess
                     ( cmd
-                        { std_in = UseHandle handles.handles_stdin
-                        , std_out = UseHandle handles.handles_stdout
-                        , std_err = UseHandle handles.handles_stderr
+                        { std_in = UseHandle hs._hstd_in
+                        , std_out = UseHandle hs._hstd_out
+                        , std_err = UseHandle hs._hstd_err
                         }
                     )
         case mby of
@@ -188,6 +199,7 @@ evalArgs = mapM eval
     eval (AIdent str) = return (unpack str)
     eval (ASub _) = TODO
 
+-- TODO: Not really compatible with pipes atm
 builtin :: Builtin -> Env ()
 builtin = \case
     TCd [] -> getVar "HOME" >>= success . changeWorkingDirectory

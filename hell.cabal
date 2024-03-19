@@ -39,6 +39,7 @@ executable hell
     , text
     , unix
     , process
+    , optics
 
   hs-source-dirs:   app
   default-language: GHC2021

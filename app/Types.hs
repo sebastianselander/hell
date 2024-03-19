@@ -1,5 +1,4 @@
-{-# LANGUAGE UndecidableInstances #-}
-
+{-# LANGUAGE TemplateHaskell #-}
 module Types where
 
 import Control.Monad.IO.Class (MonadIO)
@@ -8,27 +7,52 @@ import Control.Monad.Writer (MonadWriter, WriterT)
 import Data.Functor.Identity (Identity)
 import Data.Map (Map)
 import Data.Text (Text)
+import GHC.Generics (Generic)
 import System.Exit (ExitCode (..))
 import System.IO (Handle)
 import Text.Parsec (Parsec)
 import Text.Parsec.Expr (OperatorTable)
+import Optics
+
+
+data Handles = Handles
+    { _hstd_in :: !Handle
+    , _hstd_out :: !Handle
+    , _hstd_err :: !Handle
+    }
+    deriving (Show, Eq, Generic)
+
+makeLenses ''Handles
 
 data Shell = Shell
-    { exitCode :: !ExitCode
-    , currentDirectory :: !FilePath
-    , previousDirectory :: !FilePath
-    , variables :: !(Map String String)
-    , handles :: !Handles
+    { _exitCode :: !ExitCode
+    , _currentDirectory :: !FilePath
+    , _previousDirectory :: !FilePath
+    , _variables :: !(Map String String)
+    , _handles :: !Handles
+    , _exit :: !Bool
     }
-    deriving (Show)
+    deriving (Show, Generic)
+makeLenses 'Shell
 
 newtype Env a = Env {runEnv :: StateT Shell (WriterT [String] IO) a}
-    deriving (Functor, Applicative, Monad, MonadState Shell, MonadWriter [String], MonadIO)
+    deriving (Functor, Applicative, Monad, MonadState Shell, MonadWriter [String], MonadIO, Generic)
 
 type Ident = Text
 
-data Mode = Read | Write | ReadWrite | Append
-    deriving (Show, Eq)
+
+data Arg = AIdent !Ident | ASub !Term
+    deriving (Show, Eq, Generic)
+
+data External = External !Ident ![Arg]
+    deriving (Show, Eq, Generic)
+
+data Builtin
+    = TCd ![Arg]
+    | TExit ![Arg]
+    | TPwd ![Arg]
+    | TLog ![Arg]
+    deriving (Show, Eq, Generic)
 
 data Term
     = Empty
@@ -41,26 +65,7 @@ data Term
     | TSub !Term
     | TExternal !External
     | TBuiltin !Builtin
-    deriving (Show, Eq)
-
-data Handles = Handles
-    { handles_stdin :: !Handle
-    , handles_stdout :: !Handle
-    , handles_stderr :: !Handle
-    }
-    deriving (Show, Eq)
-
-data External = External !Ident ![Arg]
-    deriving (Show, Eq)
-
-data Builtin
-    = TCd ![Arg]
-    | TExit ![Arg]
-    | TPwd ![Arg]
-    deriving (Show, Eq)
-
-data Arg = AIdent !Ident | ASub !Term
-    deriving (Show, Eq)
+    deriving (Show, Eq, Generic)
 
 type Parser a = Parsec Text () a
 type Table a = OperatorTable Text () Identity a
