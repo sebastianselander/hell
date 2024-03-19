@@ -34,7 +34,7 @@ pExternal :: Parser Term
 pExternal = TExternal <$> (External <$> lexeme anyString <*> pArgs)
 
 pBuiltin :: Parser Term
-pBuiltin = TBuiltin <$> choice [try pCd, try pExit, try pPwd]
+pBuiltin = TBuiltin <$> choice [try pCd, try pExit, try pPwd, try pLog]
 
 pCd :: Parser Builtin
 pCd = (TCd <$ lexeme (string "cd")) <*> pArgs
@@ -48,6 +48,8 @@ pTerm = try expr <|> Empty <$ return ()
 pPwd :: Parser Builtin
 pPwd = (TPwd <$ lexeme (string "pwd")) <*> pArgs
 
+pLog :: Parser Builtin
+pLog = (TLog <$ lexeme (string "log")) <*> pArgs
 expr :: Parser Term
 expr = buildExpressionParser table (lexeme pCommand)
   where

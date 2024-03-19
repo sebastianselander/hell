@@ -18,8 +18,8 @@ import Optics hiding (Empty)
 import Optics.State.Operators ((%=), (.=))
 import Parser (term)
 import System.Directory (doesDirectoryExist)
-import System.Exit
-import System.IO (hFlush, stderr, stdin, stdout)
+import System.Exit (ExitCode (..), exitSuccess)
+import System.IO (hClose, hFlush, stderr, stdin, stdout)
 import System.Posix hiding (createPipe)
 import System.Process
 import Types
@@ -36,24 +36,39 @@ TODO:
 defaultHandles :: Handles
 defaultHandles = Handles stdin stdout stderr
 
+-- TODO: initializie stuff in main and pass as arguments
 runShell :: Env a -> IO a
-runShell =
-    fmap fst
-        . runWriterT
-        . flip evalStateT (error "Shell not initialised")
-        . runEnv
+runShell e = do
+    (res, logList) <- runWriterT (evalStateT (runEnv e) (error "Shell not initialised"))
+    showLog logList
+    return res
+
+showLog :: [String] -> IO ()
+showLog xs = do
+    putStrLn "== LOG START =="
+    mapM_ (\x -> putStrLn ("  " ++ x)) xs
+    putStrLn "== LOG END =="
+
 shell :: Env ()
 shell = do
     initShell
     loop
   where
     loop = do
-        prompt
-        line <- shellGetInput
-        case term line of
-            Left e -> liftIO $ putStrLn e
-            Right t -> liftIO (print t) >> void (interpret t)
-        loop
+        b <- use exit
+        if b
+            then return ()
+            else do
+                prompt
+                line <- shellGetInput
+                case term line of
+                    Left e -> liftIO $ putStrLn e
+                    Right t -> do
+                        log ""
+                        log (show t)
+                        void (interpret t)
+                        log ""
+                loop
 
 shellGetInput :: Env Text
 shellGetInput = do
@@ -215,6 +230,9 @@ builtin = \case
     TExit args
         | isEmpty args -> exitShell
         | otherwise -> err "exit: too many arguments"
+    TLog args
+        | isEmpty args -> modifying exit (const True)
+        | otherwise -> err "log: too many arguments"
 
 exitShell :: Env ()
 exitShell = liftIO exitSuccess
