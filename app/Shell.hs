@@ -12,7 +12,7 @@ import Control.Monad.State
 import Control.Monad.Writer
 import Data.Map qualified as Map
 import Data.Maybe (fromMaybe)
-import Data.Text (Text, init, isSuffixOf, unpack)
+import Data.Text (Text, init, isSuffixOf, unpack, pack)
 import Data.Text.IO (getLine, hPutStrLn)
 import Optics hiding (Empty)
 import Optics.State.Operators ((%=), (.=))
@@ -225,7 +225,9 @@ builtin = \case
             True -> success $ changeWorkingDirectory (unpack arg)
     TCd ((_ : _)) -> err "cd: too many arguments"
     TPwd args
-        | isEmpty args -> success (getWorkingDirectory >>= putStrLn)
+        | isEmpty args -> do 
+            out <- view hstd_out <$> use handles
+            success (getWorkingDirectory >>= hPutStrLn out . pack)
         | otherwise -> err "pwd: too many arguments"
     TExit args
         | isEmpty args -> exitShell
