@@ -27,8 +27,12 @@ newtype Env a = Env {runEnv :: StateT Shell (WriterT [String] IO) a}
 
 type Ident = Text
 
+data Mode = Read | Write | ReadWrite | Append
+    deriving (Show, Eq)
+
 data Term
     = Empty
+    | TRedirection !Mode !Term !Text
     | TSeq !Term !Term
     | TOr !Term !Term
     | TAnd !Term !Term

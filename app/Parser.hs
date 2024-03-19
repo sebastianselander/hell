@@ -53,10 +53,10 @@ expr = buildExpressionParser table (lexeme pCommand)
   where
     table =
         [
-            [ Prefix (TBang <$ char '!' <* space)
+            [ Infix (TPipe <$ try (char '|')) AssocLeft
             ]
         ,
-            [ Infix (TPipe <$ try (char '|')) AssocLeft
+            [ Prefix (TBang <$ char '!' <* space)
             ]
         ,
             [ Infix (TOr <$ try (string "||")) AssocLeft
