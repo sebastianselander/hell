@@ -7,7 +7,6 @@ import Control.Monad.Writer (MonadWriter, WriterT)
 import Data.Functor.Identity (Identity)
 import Data.Map (Map)
 import Data.Text (Text)
-import GHC.Generics (Generic)
 import System.Exit (ExitCode (..))
 import System.IO (Handle)
 import Text.Parsec (Parsec)
@@ -20,7 +19,7 @@ data Handles = Handles
     , _hstd_out :: !Handle
     , _hstd_err :: !Handle
     }
-    deriving (Show, Eq, Generic)
+    deriving (Show, Eq)
 
 makeLenses ''Handles
 
@@ -32,27 +31,28 @@ data Shell = Shell
     , _handles :: !Handles
     , _exit :: !Bool
     }
-    deriving (Show, Generic)
+    deriving (Show)
 makeLenses 'Shell
 
 newtype Env a = Env {runEnv :: StateT Shell (WriterT [String] IO) a}
-    deriving (Functor, Applicative, Monad, MonadState Shell, MonadWriter [String], MonadIO, Generic)
+    deriving (Functor, Applicative, Monad, MonadState Shell, MonadWriter [String], MonadIO)
 
 type Ident = Text
 
 
 data Arg = AIdent !Ident | ASub !Term
-    deriving (Show, Eq, Generic)
+    deriving (Show, Eq)
 
 data External = External !Ident ![Arg]
-    deriving (Show, Eq, Generic)
+    deriving (Show, Eq)
 
 data Builtin
     = TCd ![Arg]
     | TExit ![Arg]
     | TPwd ![Arg]
     | TLog ![Arg]
-    deriving (Show, Eq, Generic)
+    deriving (Show, Eq)
+
 data Mode = Write | Read | ReadWrite | Append
     deriving (Show, Eq)
 
@@ -67,7 +67,7 @@ data Term
     | TSub !Term
     | TExternal !External
     | TBuiltin !Builtin
-    deriving (Show, Eq, Generic)
+    deriving (Show, Eq)
 
 type Parser a = Parsec Text () a
 type Table a = OperatorTable Text () Identity a
