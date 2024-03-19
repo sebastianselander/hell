@@ -53,6 +53,8 @@ data Builtin
     | TPwd ![Arg]
     | TLog ![Arg]
     deriving (Show, Eq, Generic)
+data Mode = Write | Read | ReadWrite | Append
+    deriving (Show, Eq)
 
 data Term
     = Empty
