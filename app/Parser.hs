@@ -50,6 +50,7 @@ pPwd = (TPwd <$ lexeme (string "pwd")) <*> pArgs
 
 pLog :: Parser Builtin
 pLog = (TLog <$ lexeme (string "log")) <*> pArgs
+
 expr :: Parser Term
 expr = buildExpressionParser table (lexeme pCommand)
   where

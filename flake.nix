@@ -10,31 +10,26 @@
       let
         haskell-packages = nixpkgs.legacyPackages.${system}.haskell.packages;
         ghcVersion = "ghc948";
-        pkgs = import nixpkgs {
-          inherit system;
-        };
-      in
-      {
+        pkgs = import nixpkgs { inherit system; };
+      in {
         packages = {
-          default = haskell-packages.${ghcVersion}.developPackage
-            {
-              root = ./.;
-              withHoogle = true;
-              # Look into managing specific versions of dependencies
-            };
+          default = haskell-packages.${ghcVersion}.developPackage {
+            root = ./.;
+            withHoogle = true;
+            # Look into managing specific versions of dependencies
+          };
         };
         devShells = {
-          default =
-            pkgs.mkShell {
-              nativeBuildInputs = [
-                pkgs.ghc
-                pkgs.haskell-language-server
-                pkgs.haskellPackages.cabal-install
-                pkgs.haskellPackages.fourmolu
-                pkgs.haskellPackages.hoogle
-                pkgs.zlib
-              ];
-            };
+          default = pkgs.mkShell {
+            nativeBuildInputs = [
+              pkgs.ghc
+              pkgs.haskell-language-server
+              pkgs.haskellPackages.cabal-install
+              pkgs.haskellPackages.fourmolu
+              pkgs.haskellPackages.hoogle
+              pkgs.zlib
+            ];
+          };
         };
       });
 }

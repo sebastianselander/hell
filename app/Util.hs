@@ -2,14 +2,15 @@
 
 module Util where
 
-import Types
 import Control.Monad.IO.Class (liftIO)
 import System.Console.ANSI
+import Types
 
 {-# WARNING TODO "TODO IN CODE" #-}
 pattern TODO :: a
 pattern TODO <- _
-  where TODO = error "TODO: Not yet implemented"
+    where
+        TODO = error "TODO: Not yet implemented"
 
 setColor :: Color -> Env ()
 setColor col = liftIO $ setSGR [SetColor Foreground Dull col]

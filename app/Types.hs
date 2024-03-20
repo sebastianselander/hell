@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+
 module Types where
 
 import Control.Monad.IO.Class (MonadIO)
@@ -7,12 +8,11 @@ import Control.Monad.Writer (MonadWriter, WriterT)
 import Data.Functor.Identity (Identity)
 import Data.Map (Map)
 import Data.Text (Text)
+import Optics
 import System.Exit (ExitCode (..))
 import System.IO (Handle)
 import Text.Parsec (Parsec)
 import Text.Parsec.Expr (OperatorTable)
-import Optics
-
 
 data Handles = Handles
     { _hstd_in :: !Handle
@@ -32,13 +32,20 @@ data Shell = Shell
     , _exit :: !Bool
     }
     deriving (Show)
+
 makeLenses 'Shell
 
 newtype Env a = Env {runEnv :: StateT Shell (WriterT [String] IO) a}
-    deriving (Functor, Applicative, Monad, MonadState Shell, MonadWriter [String], MonadIO)
+    deriving
+        ( Functor
+        , Applicative
+        , Monad
+        , MonadState Shell
+        , MonadWriter [String]
+        , MonadIO
+        )
 
 type Ident = Text
-
 
 data Arg = AIdent !Ident | ASub !Term
     deriving (Show, Eq)
@@ -70,4 +77,5 @@ data Term
     deriving (Show, Eq)
 
 type Parser a = Parsec Text () a
+
 type Table a = OperatorTable Text () Identity a

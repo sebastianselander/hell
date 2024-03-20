@@ -12,7 +12,7 @@ import Control.Monad.State
 import Control.Monad.Writer
 import Data.Map qualified as Map
 import Data.Maybe (fromMaybe)
-import Data.Text (Text, init, isSuffixOf, unpack, pack)
+import Data.Text (Text, init, isSuffixOf, pack, unpack)
 import Data.Text.IO (getLine, hPutStrLn)
 import Optics hiding (Empty)
 import Optics.State.Operators ((%=), (.=))
@@ -39,7 +39,8 @@ defaultHandles = Handles stdin stdout stderr
 -- TODO: initializie stuff in main and pass as arguments
 runShell :: Env a -> IO a
 runShell e = do
-    (res, logList) <- runWriterT (evalStateT (runEnv e) (error "Shell not initialised"))
+    (res, logList) <-
+        runWriterT (evalStateT (runEnv e) (error "Shell not initialised"))
     showLog logList
     return res
 
@@ -189,7 +190,8 @@ external = \case
     External command as -> do
         hs <- use handles
         as' <- evalArgs as
-        let cmd = proc (unpack command) as'
+        let
+            cmd = proc (unpack command) as'
         mby <-
             catchIO $
                 createProcess
@@ -205,7 +207,12 @@ external = \case
             Just (in_handle, out_handle, err_handle, processHandle) -> do
                 code <- liftIO $ waitForProcess processHandle
                 setExitCode code
-                return (Handles (fromMaybe stdin in_handle) (fromMaybe stdout out_handle) (fromMaybe stderr err_handle))
+                return
+                    ( Handles
+                        (fromMaybe stdin in_handle)
+                        (fromMaybe stdout out_handle)
+                        (fromMaybe stderr err_handle)
+                    )
 
 evalArgs :: [Arg] -> Env [String]
 evalArgs = mapM eval
@@ -225,7 +232,7 @@ builtin = \case
             True -> success $ changeWorkingDirectory (unpack arg)
     TCd ((_ : _)) -> err "cd: too many arguments"
     TPwd args
-        | isEmpty args -> do 
+        | isEmpty args -> do
             out <- view hstd_out <$> use handles
             success (getWorkingDirectory >>= hPutStrLn out . pack)
         | otherwise -> err "pwd: too many arguments"
