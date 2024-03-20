@@ -35,11 +35,11 @@ executable hell
     , containers
     , directory
     , mtl
-    , parsec
-    , text
-    , unix
-    , process
     , optics
+    , parsec
+    , process
+    , text
+    , unix           >=2.8.5
 
   hs-source-dirs:   app
   default-language: GHC2021
