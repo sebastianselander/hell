@@ -4,7 +4,6 @@ module Types where
 
 import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.State (MonadState, StateT)
-import Control.Monad.Writer (MonadWriter, WriterT)
 import Data.Functor.Identity (Identity)
 import Data.Map (Map)
 import Data.Text (Text)
@@ -13,6 +12,7 @@ import System.Exit (ExitCode (..))
 import System.IO (Handle)
 import Text.Parsec (Parsec)
 import Text.Parsec.Expr (OperatorTable)
+import Data.List.NonEmpty (NonEmpty)
 
 data Handles = Handles
     { _hstd_in :: !Handle
@@ -35,13 +35,12 @@ data Shell = Shell
 
 makeLenses 'Shell
 
-newtype Env a = Env {runEnv :: StateT Shell (WriterT [String] IO) a}
+newtype Env a = Env {runEnv :: StateT Shell IO a}
     deriving
         ( Functor
         , Applicative
         , Monad
         , MonadState Shell
-        , MonadWriter [String]
         , MonadIO
         )
 
@@ -60,12 +59,16 @@ data Builtin
     | TLog ![Arg]
     deriving (Show, Eq)
 
+-- TODO: Add optional file descriptors as well
 data Mode = Write | Read | ReadWrite | Append
+    deriving (Show, Eq)
+
+data Redirection = Redirection !Mode !(NonEmpty FilePath)
     deriving (Show, Eq)
 
 data Term
     = Empty
-    | TRedirection !Mode !Term !Text
+    | TRedirection !Term !(NonEmpty Redirection)
     | TSeq !Term !Term
     | TOr !Term !Term
     | TAnd !Term !Term
