@@ -10,6 +10,7 @@ module Shell where
 import Control.Exception (IOException, catch)
 import Control.Monad.State
 import Control.Monad.Writer
+import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Map qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text, init, isSuffixOf, pack, unpack)
@@ -19,8 +20,9 @@ import Optics.State.Operators ((%=), (.=))
 import Parser (term)
 import System.Directory (doesDirectoryExist)
 import System.Exit (ExitCode (..), exitSuccess)
-import System.IO (hClose, hFlush, stderr, stdin, stdout)
-import System.Posix hiding (createPipe)
+import System.IO (Handle, hClose, hFlush, stderr, stdin, stdout)
+import System.Posix (Fd)
+import System.Posix qualified as Unix
 import System.Process
 import Types
 import Util
@@ -38,17 +40,7 @@ defaultHandles = Handles stdin stdout stderr
 
 -- TODO: initializie stuff in main and pass as arguments
 runShell :: Env a -> IO a
-runShell e = do
-    (res, logList) <-
-        runWriterT (evalStateT (runEnv e) (error "Shell not initialised"))
-    showLog logList
-    return res
-
-showLog :: [String] -> IO ()
-showLog xs = do
-    putStrLn "== LOG START =="
-    mapM_ (\x -> putStrLn ("  " ++ x)) xs
-    putStrLn "== LOG END =="
+runShell e = evalStateT (runEnv e) (error "Shell not initialised")
 
 shell :: Env ()
 shell = do
@@ -64,11 +56,7 @@ shell = do
                 line <- shellGetInput
                 case term line of
                     Left e -> liftIO $ putStrLn e
-                    Right t -> do
-                        log ""
-                        log (show t)
-                        void (interpret t)
-                        log ""
+                    Right t -> liftIO (print t) >> void (interpret t)
                 loop
 
 shellGetInput :: Env Text
@@ -98,15 +86,15 @@ prompt = do
     liftIO $ hFlush stdout
 
 resetShellTo :: Shell -> Env ()
-resetShellTo = liftIO . changeWorkingDirectory . view currentDirectory
+resetShellTo = liftIO . Unix.changeWorkingDirectory . view currentDirectory
 
 getVar :: String -> Env String
 getVar str = gets (Map.findWithDefault "" str . _variables)
 
 initShell :: Env ()
 initShell = do
-    dir <- liftIO getWorkingDirectory
-    vars <- Map.fromList <$> liftIO getEnvironment
+    dir <- liftIO Unix.getWorkingDirectory
+    vars <- Map.fromList <$> liftIO Unix.getEnvironment
     put
         ( Shell
             { _exitCode = ExitSuccess
@@ -138,25 +126,33 @@ onFailure :: a -> ExitCode -> Env a -> Env a
 onFailure _ (ExitFailure _) ma = ma
 onFailure a ExitSuccess _ = return a
 
-log :: String -> Env ()
-log s = tell [s]
-
 interpret :: Term -> Env Handles
 interpret = \case
     Empty -> return defaultHandles
-    TSeq l r -> log "sequence" >> interpret l >> interpret r
+    TSeq l r -> interpret l >> interpret r
+    TExternal command -> do
+        external command
+    TBuiltin command -> do
+        builtin command
+        return defaultHandles
     TOr l r -> do
-        log "or"
         hs <- interpret l
         code <- getExitCode
         onFailure hs code (interpret r)
     TAnd l r -> do
-        log "and"
         hs <- interpret l
         code <- getExitCode
         onSuccess hs code (interpret r)
+    TBang bang -> do
+        hs <- interpret bang
+        negateExitCode
+        return hs
+    TSub subshell -> do
+        sh <- get
+        hs <- interpret subshell
+        resetShellTo sh
+        return hs
     TPipe l r -> do
-        log "pipe"
         (readEnd, writeEnd) <- liftIO createPipe
         handles %= (hstd_out .~ writeEnd)
         hs <- interpret l
@@ -166,24 +162,52 @@ interpret = \case
         liftIO $ hClose readEnd
         handles .= defaultHandles
         return defaultHandles
-    TBang bang -> do
-        log "bang"
-        hs <- interpret bang
-        negateExitCode
+    TRedirection command redirs -> do
+        (x :| xs) <- liftIO $ redirections redirs
+        hs <- interpret command
         return hs
-    TSub subshell -> do
-        log "sub"
-        sh <- get
-        hs <- interpret subshell
-        resetShellTo sh
-        return hs
-    TExternal command -> do
-        log "external"
-        external command
-    TBuiltin command -> do
-        log "builtin"
-        builtin command
-        return defaultHandles
+
+redirections :: NonEmpty Redirection -> IO (NonEmpty (Fd, Mode))
+redirections (x :| _) = return <$> redirection x
+redirections TODO = TODO
+
+redirection :: Redirection -> IO (Fd, Mode)
+redirection = \case
+    Redirection Read (a :| xs) -> do
+        let path = case xs of
+                [] -> a
+                _ -> last xs
+        fd <- liftIO $ Unix.openFd path Unix.ReadOnly Unix.defaultFileFlags
+        return (fd, Read)
+    Redirection Write (path :| _) -> do
+        fd <- liftIO $
+            Unix.openFd
+                path
+                Unix.WriteOnly
+                ( Unix.defaultFileFlags
+                    { Unix.creat = Just Unix.stdFileMode
+                    , Unix.trunc = True
+                    }
+                )
+        return (fd, Write)
+    Redirection ReadWrite (a :| xs) -> do
+        let path = case xs of
+                [] -> a
+                _ -> last xs
+        fd <- liftIO $ Unix.openFd path Unix.ReadWrite Unix.defaultFileFlags
+        return (fd, Read)
+        
+    Redirection Append (path :| _) -> do
+        fd <- liftIO $
+            Unix.openFd
+                path
+                Unix.WriteOnly
+                ( Unix.defaultFileFlags
+                    { Unix.creat = Just Unix.stdFileMode
+                    , Unix.append = True
+                    }
+                )
+        return (fd, Write)
 
 external :: External -> Env Handles
 external = \case
@@ -224,17 +248,17 @@ evalArgs = mapM eval
 -- TODO: Not really compatible with pipes atm
 builtin :: Builtin -> Env ()
 builtin = \case
-    TCd [] -> getVar "HOME" >>= success . changeWorkingDirectory
+    TCd [] -> getVar "HOME" >>= success . Unix.changeWorkingDirectory
     TCd [ASub _] -> TODO
     TCd [AIdent arg] -> do
         liftIO (doesDirectoryExist (unpack arg)) >>= \case
             False -> err "cd: No such file or directory"
-            True -> success $ changeWorkingDirectory (unpack arg)
+            True -> success $ Unix.changeWorkingDirectory (unpack arg)
     TCd ((_ : _)) -> err "cd: too many arguments"
     TPwd args
         | isEmpty args -> do
             out <- view hstd_out <$> use handles
-            success (getWorkingDirectory >>= hPutStrLn out . pack)
+            success (Unix.getWorkingDirectory >>= hPutStrLn out . pack)
         | otherwise -> err "pwd: too many arguments"
     TExit args
         | isEmpty args -> exitShell
