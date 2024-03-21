@@ -1,28 +1,35 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiWayIf #-}
-{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Shell where
 
 import Control.Exception (IOException, catch)
+import Control.Monad.Reader (ask, asks, local, runReaderT)
 import Control.Monad.State
 import Control.Monad.Writer
-import Data.List.NonEmpty (NonEmpty ((:|)))
+import Data.List.NonEmpty (NonEmpty ((:|)), toList)
 import Data.Map qualified as Map
-import Data.Maybe (fromMaybe)
 import Data.Text (Text, init, isSuffixOf, pack, unpack)
 import Data.Text.IO (getLine, hPutStrLn)
 import Optics hiding (Empty)
-import Optics.State.Operators ((%=), (.=))
+import Optics.State.Operators ((%=))
 import Parser (term)
 import System.Directory (doesDirectoryExist)
+import System.Directory.Internal (copyHandleData)
 import System.Exit (ExitCode (..), exitSuccess)
-import System.IO (Handle, hClose, hFlush, stderr, stdin, stdout)
-import System.Posix (Fd)
-import System.Posix qualified as Unix
+import System.IO
+    ( Handle,
+      hClose,
+      hFlush,
+      hPutStr,
+      stderr,
+      stdin,
+      stdout, hGetContents,
+    )
+import System.Posix qualified as Unix hiding (fdRead)
 import System.Process
 import Types
 import Util
@@ -40,7 +47,10 @@ defaultHandles = Handles stdin stdout stderr
 
 -- TODO: initializie stuff in main and pass as arguments
 runShell :: Env a -> IO a
-runShell e = evalStateT (runEnv e) (error "Shell not initialised")
+runShell =
+    flip runReaderT defaultHandles
+        . flip evalStateT (error "Shell not initialised")
+        . runEnv
 
 shell :: Env ()
 shell = do
@@ -56,7 +66,7 @@ shell = do
                 line <- shellGetInput
                 case term line of
                     Left e -> liftIO $ putStrLn e
-                    Right t -> liftIO (print t) >> void (interpret t)
+                    Right t -> interpret t
                 loop
 
 shellGetInput :: Env Text
@@ -101,7 +111,6 @@ initShell = do
             , _currentDirectory = dir
             , _previousDirectory = dir
             , _variables = vars
-            , _handles = defaultHandles
             , _exit = False
             }
         )
@@ -126,93 +135,124 @@ onFailure :: a -> ExitCode -> Env a -> Env a
 onFailure _ (ExitFailure _) ma = ma
 onFailure a ExitSuccess _ = return a
 
-interpret :: Term -> Env Handles
+interpret :: Term -> Env ()
 interpret = \case
-    Empty -> return defaultHandles
+    Empty -> return ()
     TSeq l r -> interpret l >> interpret r
-    TExternal command -> do
-        external command
-    TBuiltin command -> do
-        builtin command
-        return defaultHandles
+    TExternal command -> external command
+    TBuiltin command -> builtin command
     TOr l r -> do
-        hs <- interpret l
+        interpret l
         code <- getExitCode
-        onFailure hs code (interpret r)
+        onFailure () code (interpret r)
     TAnd l r -> do
-        hs <- interpret l
+        interpret l
         code <- getExitCode
-        onSuccess hs code (interpret r)
+        onSuccess () code (interpret r)
     TBang bang -> do
-        hs <- interpret bang
+        interpret bang
         negateExitCode
-        return hs
     TSub subshell -> do
         sh <- get
-        hs <- interpret subshell
+        interpret subshell
+        put sh
         resetShellTo sh
-        return hs
     TPipe l r -> do
         (readEnd, writeEnd) <- liftIO createPipe
-        handles %= (hstd_out .~ writeEnd)
-        hs <- interpret l
-        liftIO $ hClose writeEnd
-        handles .= (hs & hstd_in .~ readEnd)
-        void (interpret r)
-        liftIO $ hClose readEnd
-        handles .= defaultHandles
-        return defaultHandles
+        hs <- ask
+        local (hstd_out .~ writeEnd) $ do
+            interpret l
+            liftIO $ hClose writeEnd
+        local (const (hs & hstd_in .~ readEnd)) $ do
+            interpret r
+            liftIO $ hClose readEnd
     TRedirection command redirs -> do
-        (x :| xs) <- liftIO $ redirections redirs
-        hs <- interpret command
-        return hs
+        hds <- liftIO $ redirections redirs
+        let
+            (readz, writez) = splitByMode hds
+        inputHandle <-
+            if not (null readz)
+                then do
+                    (readEnd, writeEnd) <- liftIO createPipe
+                    liftIO $ do
+                        mapM_
+                            (\h -> copyHandleData h writeEnd >> hClose h)
+                            readz
+                        hClose writeEnd
+                    return (Just readEnd)
+                else return Nothing
+        let
+            updateInputHandle = maybe id (hstd_in .~) inputHandle
+            closeInputHandle = maybe (return ()) (liftIO . hClose) inputHandle
+        if null writez
+            then do
+                local updateInputHandle $ do
+                    hs <- interpret command
+                    closeInputHandle
+                    return hs
+            else do
+                (readEnd, writeEnd) <- liftIO createPipe
+                local ((hstd_out .~ writeEnd) . updateInputHandle) $ do
+                    hs <- interpret command
+                    liftIO $ hClose writeEnd
+                    closeInputHandle
+                    output <- liftIO $ hGetContents readEnd
+                    liftIO $ mapM_ (\h -> hPutStr h output >> hClose h) writez
+                    liftIO $ hClose readEnd
+                    return hs
 
-redirections :: NonEmpty Redirection -> IO (NonEmpty (Fd, Mode))
-redirections (x :| _) = return <$> redirection x
-redirections TODO = TODO
+redirections :: NonEmpty Redirection -> IO [(Handle, Mode)]
+redirections = mapM redirection . toList
+  where
+    redirection :: Redirection -> IO (Handle, Mode)
+    redirection = \case
+        Redirection Write (path :| _) -> do
+            fd <-
+                liftIO $
+                    Unix.fdToHandle
+                        =<< Unix.openFd
+                            path
+                            Unix.WriteOnly
+                            ( Unix.defaultFileFlags
+                                { Unix.creat = Just Unix.stdFileMode
+                                , Unix.trunc = True
+                                }
+                            )
+            return (fd, Write)
+        Redirection Append (path :| _) -> do
+            fd <-
+                liftIO $
+                    Unix.fdToHandle
+                        =<< Unix.openFd
+                            path
+                            Unix.WriteOnly
+                            ( Unix.defaultFileFlags
+                                { Unix.creat = Just Unix.stdFileMode
+                                , Unix.append = True
+                                }
+                            )
+            return (fd, Append)
+        Redirection Read (a :| xs) -> do
+            let
+                path = last (a : xs)
+            fd <-
+                liftIO $
+                    Unix.fdToHandle
+                        =<< Unix.openFd path Unix.ReadOnly Unix.defaultFileFlags
+            return (fd, Read)
+        Redirection ReadWrite (a :| xs) -> do
+            let
+                path = last (a : xs)
+            fd <-
+                liftIO $
+                    Unix.fdToHandle
+                        =<< Unix.openFd path Unix.ReadWrite Unix.defaultFileFlags
+            return (fd, ReadWrite)
 
-redirection :: Redirection -> IO (Fd, Mode)
-redirection = \case
-    Redirection Read (a :| xs) -> do
-        let path = case xs of
-                [] -> a
-                _ -> last xs
-        fd <- liftIO $ Unix.openFd path Unix.ReadOnly Unix.defaultFileFlags
-        return (fd, Read)
-    Redirection Write (path :| _) -> do
-        fd <- liftIO $
-            Unix.openFd
-                path
-                Unix.WriteOnly
-                ( Unix.defaultFileFlags
-                    { Unix.creat = Just Unix.stdFileMode
-                    , Unix.trunc = True
-                    }
-                )
-        return (fd, Write)
-    Redirection ReadWrite (a :| xs) -> do
-        let path = case xs of
-                [] -> a
-                _ -> last xs
-        fd <- liftIO $ Unix.openFd path Unix.ReadWrite Unix.defaultFileFlags
-        return (fd, Read)
-        
-    Redirection Append (path :| _) -> do
-        fd <- liftIO $
-            Unix.openFd
-                path
-                Unix.WriteOnly
-                ( Unix.defaultFileFlags
-                    { Unix.creat = Just Unix.stdFileMode
-                    , Unix.append = True
-                    }
-                )
-        return (fd, Write)
-
-external :: External -> Env Handles
+external :: External -> Env ()
 external = \case
     External command as -> do
-        hs <- use handles
+        hs <- ask
         as' <- evalArgs as
         let
             cmd = proc (unpack command) as'
@@ -220,23 +260,19 @@ external = \case
             catchIO $
                 createProcess
                     ( cmd
-                        { std_in = UseHandle hs._hstd_in
-                        , std_out = UseHandle hs._hstd_out
-                        , std_err = UseHandle hs._hstd_err
+                        { std_in = UseHandle (hs ^. hstd_in)
+                        , std_out = UseHandle (hs ^. hstd_out)
+                        , std_err = UseHandle (hs ^. hstd_err)
                         }
                     )
         case mby of
             -- TODO: Make the type application unnecessary
-            Nothing -> err @() (command <> ": command not found") >> return defaultHandles
-            Just (in_handle, out_handle, err_handle, processHandle) -> do
+            Nothing ->
+                err @() (command <> ": command not found")
+            Just (_, _, _, processHandle) -> do
                 code <- liftIO $ waitForProcess processHandle
                 setExitCode code
-                return
-                    ( Handles
-                        (fromMaybe stdin in_handle)
-                        (fromMaybe stdout out_handle)
-                        (fromMaybe stderr err_handle)
-                    )
+                return ()
 
 evalArgs :: [Arg] -> Env [String]
 evalArgs = mapM eval
@@ -257,7 +293,7 @@ builtin = \case
     TCd ((_ : _)) -> err "cd: too many arguments"
     TPwd args
         | isEmpty args -> do
-            out <- view hstd_out <$> use handles
+            out <- asks (view hstd_out)
             success (Unix.getWorkingDirectory >>= hPutStrLn out . pack)
         | otherwise -> err "pwd: too many arguments"
     TExit args
