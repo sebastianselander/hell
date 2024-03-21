@@ -13,6 +13,7 @@ import System.IO (Handle)
 import Text.Parsec (Parsec)
 import Text.Parsec.Expr (OperatorTable)
 import Data.List.NonEmpty (NonEmpty)
+import Control.Monad.Reader (ReaderT, MonadReader)
 
 data Handles = Handles
     { _hstd_in :: !Handle
@@ -28,19 +29,19 @@ data Shell = Shell
     , _currentDirectory :: !FilePath
     , _previousDirectory :: !FilePath
     , _variables :: !(Map String String)
-    , _handles :: !Handles
     , _exit :: !Bool
     }
     deriving (Show)
 
 makeLenses 'Shell
 
-newtype Env a = Env {runEnv :: StateT Shell IO a}
+newtype Env a = Env {runEnv :: StateT Shell (ReaderT Handles IO) a}
     deriving
         ( Functor
         , Applicative
         , Monad
         , MonadState Shell
+        , MonadReader Handles
         , MonadIO
         )
 
