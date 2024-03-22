@@ -44,3 +44,14 @@ esequence xs = case go [] [] xs of
     go lefts rights (x:xs) = case x of
         Right a -> go lefts (a : rights) xs
         Left err -> go (err : lefts) [] xs
+
+mapLeft :: (a -> b) -> Either a c -> Either b c
+mapLeft f (Left a) = Left $ f a
+mapLeft _ (Right c) = Right c
+
+mapRight :: (a -> b) -> Either c a -> Either c b
+mapRight f (Right a) = Right $ f a
+mapRight _ (Left c) = Left c
+
+mapEither :: (a -> b) -> Either a a -> Either b b
+mapEither f = mapLeft f . mapRight f
