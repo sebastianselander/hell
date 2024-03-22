@@ -164,6 +164,15 @@ interpret = \case
         local (set hstd_in readEnd) $ do
             interpret r
             liftIO $ hClose readEnd
+
+    {-
+        command n> word
+        create pipe from n to word
+
+        command n< word
+        read from word to n
+
+    -}
     TRedirection command redirs -> do
         liftIO (redirections redirs) >>= \case
             Left errs -> report errs
@@ -207,7 +216,7 @@ report :: [Text] -> Env ()
 report = mapM_ (err @())
 
 redirections :: NonEmpty Redirection -> IO (Either [Text] [(Handle, Mode)])
-redirections = fmap esequence . mapM redirection . toList
+redirections = fmap (esequence . reverse) . mapM redirection . toList
   where
     redirection :: Redirection -> IO (Either Text (Handle, Mode))
     redirection = \case
