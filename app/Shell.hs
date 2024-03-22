@@ -162,36 +162,36 @@ interpret = \case
             interpret r
             liftIO $ hClose readEnd
     TRedirection command redirs -> do
-        hds <- liftIO $ redirections redirs
-        let (readz, writez) = splitByMode hds
-        inputHandle <-
-            if not (null readz)
-                then do
-                    (readEnd, writeEnd) <- liftIO createPipe
-                    liftIO $ do
-                        mapM_
-                            (\h -> copyHandleData h writeEnd >> hClose h)
-                            readz
-                        hClose writeEnd
-                    return (Just readEnd)
-                else return Nothing
-        let updateInputHandle = maybe id (hstd_in .~) inputHandle
+        (readHandles, writeHandles) <-
+            liftIO $
+                splitByMode
+                    <$> redirections redirs
+        inputHandle <- case readHandles of
+            [] -> return Nothing
+            _ -> liftIO $ do
+                (readEnd, writeEnd) <- createPipe
+                let copy' h = copyHandleData h writeEnd >> hClose h
+                mapM_ copy' readHandles
+                hClose writeEnd
+                return (Just readEnd)
+        let updateInputHandle = maybe id (set hstd_in) inputHandle
             closeInputHandle = maybe (return ()) (liftIO . hClose) inputHandle
-        if null writez
-            then do
+        case writeHandles of
+            [] -> do
                 local updateInputHandle $ do
                     hs <- interpret command
                     closeInputHandle
                     return hs
-            else do
+            _ -> do
                 (readEnd, writeEnd) <- liftIO createPipe
-                local ((hstd_out .~ writeEnd) . updateInputHandle) $ do
+                local (set hstd_out writeEnd . updateInputHandle) $ do
                     hs <- interpret command
-                    liftIO $ hClose writeEnd
                     closeInputHandle
-                    output <- liftIO $ hGetContents readEnd
-                    liftIO $ mapM_ (\h -> hPutStr h output >> hClose h) writez
-                    liftIO $ hClose readEnd
+                    liftIO $ do
+                        hClose writeEnd
+                        output <- hGetContents readEnd
+                        mapM_ (\h -> hPutStr h output >> hClose h) writeHandles
+                        hClose readEnd
                     return hs
 
 redirections :: NonEmpty Redirection -> IO [(Handle, Mode)]
