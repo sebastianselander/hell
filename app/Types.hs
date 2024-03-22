@@ -62,7 +62,7 @@ data Builtin
 data Mode = Write | Read | ReadWrite | Append
     deriving (Show, Eq)
 
-data Redirection = Redirection !Mode !(NonEmpty FilePath)
+data Redirection = Redirection !(Maybe Int) !Mode !(NonEmpty FilePath)
     deriving (Show, Eq)
 
 data Term
