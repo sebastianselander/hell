@@ -29,7 +29,6 @@ data Shell = Shell
     , _currentDirectory :: !FilePath
     , _previousDirectory :: !FilePath
     , _variables :: !(Map String String)
-    , _exit :: !Bool
     }
     deriving (Show)
 
@@ -57,7 +56,6 @@ data Builtin
     = TCd ![Arg]
     | TExit ![Arg]
     | TPwd ![Arg]
-    | TLog ![Arg]
     deriving (Show, Eq)
 
 -- TODO: Add optional file descriptors as well

@@ -1,11 +1,10 @@
 module Parser where
 
+import Data.List.NonEmpty (fromList)
 import Data.Text (Text, pack)
 import Text.Parsec hiding (Empty)
 import Text.Parsec.Expr (Assoc (..), Operator (..), buildExpressionParser)
 import Types
-import Util
-import Data.List.NonEmpty (fromList)
 
 lexeme :: Parser a -> Parser a
 lexeme p = spaces *> p <* spaces

@@ -24,10 +24,11 @@ import System.IO
     ( Handle,
       hClose,
       hFlush,
+      hGetContents,
       hPutStr,
       stderr,
       stdin,
-      stdout, hGetContents,
+      stdout,
     )
 import System.Posix qualified as Unix hiding (fdRead)
 import System.Process
@@ -168,8 +169,7 @@ interpret = \case
             liftIO $ hClose readEnd
     TRedirection command redirs -> do
         hds <- liftIO $ redirections redirs
-        let
-            (readz, writez) = splitByMode hds
+        let (readz, writez) = splitByMode hds
         inputHandle <-
             if not (null readz)
                 then do
@@ -181,8 +181,7 @@ interpret = \case
                         hClose writeEnd
                     return (Just readEnd)
                 else return Nothing
-        let
-            updateInputHandle = maybe id (hstd_in .~) inputHandle
+        let updateInputHandle = maybe id (hstd_in .~) inputHandle
             closeInputHandle = maybe (return ()) (liftIO . hClose) inputHandle
         if null writez
             then do
@@ -233,16 +232,14 @@ redirections = mapM redirection . toList
                             )
             return (fd, Append)
         Redirection Read (a :| xs) -> do
-            let
-                path = last (a : xs)
+            let path = last (a : xs)
             fd <-
                 liftIO $
                     Unix.fdToHandle
                         =<< Unix.openFd path Unix.ReadOnly Unix.defaultFileFlags
             return (fd, Read)
         Redirection ReadWrite (a :| xs) -> do
-            let
-                path = last (a : xs)
+            let path = last (a : xs)
             fd <-
                 liftIO $
                     Unix.fdToHandle
@@ -254,8 +251,7 @@ external = \case
     External command as -> do
         hs <- ask
         as' <- evalArgs as
-        let
-            cmd = proc (unpack command) as'
+        let cmd = proc (unpack command) as'
         mby <-
             catchIO $
                 createProcess
