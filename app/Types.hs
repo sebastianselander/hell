@@ -3,8 +3,10 @@
 module Types where
 
 import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.Reader (MonadReader, ReaderT)
 import Control.Monad.State (MonadState, StateT)
 import Data.Functor.Identity (Identity)
+import Data.List.NonEmpty (NonEmpty)
 import Data.Map (Map)
 import Data.Text (Text)
 import Optics
@@ -12,8 +14,6 @@ import System.Exit (ExitCode (..))
 import System.IO (Handle)
 import Text.Parsec (Parsec)
 import Text.Parsec.Expr (OperatorTable)
-import Data.List.NonEmpty (NonEmpty)
-import Control.Monad.Reader (ReaderT, MonadReader)
 
 data Handles = Handles
     { _hstd_in :: !Handle
