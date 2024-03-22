@@ -59,16 +59,12 @@ shell = do
     loop
   where
     loop = do
-        b <- use exit
-        if b
-            then return ()
-            else do
-                prompt
-                line <- shellGetInput
-                case term line of
-                    Left e -> liftIO $ putStrLn e
-                    Right t -> interpret t
-                loop
+        prompt
+        line <- shellGetInput
+        case term line of
+            Left e -> liftIO $ putStrLn e
+            Right t -> interpret t
+        loop
 
 shellGetInput :: Env Text
 shellGetInput = do
@@ -112,7 +108,6 @@ initShell = do
             , _currentDirectory = dir
             , _previousDirectory = dir
             , _variables = vars
-            , _exit = False
             }
         )
 
@@ -295,9 +290,6 @@ builtin = \case
     TExit args
         | isEmpty args -> exitShell
         | otherwise -> err "exit: too many arguments"
-    TLog args
-        | isEmpty args -> modifying exit (const True)
-        | otherwise -> err "log: too many arguments"
 
 exitShell :: Env ()
 exitShell = liftIO exitSuccess
