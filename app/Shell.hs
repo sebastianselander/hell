@@ -66,7 +66,7 @@ shell = do
         line <- shellGetInput
         case term line of
             Left e -> liftIO $ putStrLn e
-            Right t -> interpret t
+            Right t -> liftIO (print t) >> interpret t
         loop
 
 shellGetInput :: Env Text
@@ -220,26 +220,26 @@ redirections = fmap (esequence . reverse) . mapM redirection . toList
   where
     redirection :: Redirection -> IO (Either Text (Handle, Mode))
     redirection = \case
-        Redirection Write (path :| _) -> do
+        Redirection fd Write (path :| _) -> do
             hndl <-
                 handle @IOError
                     (return . Left . pack . show . flip ioeSetLocation "")
                     (Right <$> openFile path WriteMode)
             return ((,Write) <$> hndl)
-        Redirection Append (path :| _) -> do
+        Redirection fd Append (path :| _) -> do
             hndl <-
                 handle @IOError
                     (return . Left . pack . show . flip ioeSetLocation "")
                     (Right <$> openFile path AppendMode)
             return ((,Append) <$> hndl)
-        Redirection Read (a :| xs) -> do
+        Redirection fd Read (a :| xs) -> do
             let path = last (a : xs)
             hndl <-
                 handle @IOError
                     (return . Left . pack . show . flip ioeSetLocation "")
                     (Right <$> openFile path ReadMode)
             return ((,Read) <$> hndl)
-        Redirection ReadWrite (a :| xs) -> do
+        Redirection fd ReadWrite (a :| xs) -> do
             let path = last (a : xs)
             hndl <-
                 handle @IOError
