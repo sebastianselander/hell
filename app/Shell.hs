@@ -155,11 +155,10 @@ interpret = \case
         resetShellTo sh
     TPipe l r -> do
         (readEnd, writeEnd) <- liftIO createPipe
-        hs <- ask
-        local (hstd_out .~ writeEnd) $ do
+        local (set hstd_out writeEnd) $ do
             interpret l
             liftIO $ hClose writeEnd
-        local (const (hs & hstd_in .~ readEnd)) $ do
+        local (set hstd_in readEnd) $ do
             interpret r
             liftIO $ hClose readEnd
     TRedirection command redirs -> do
@@ -272,7 +271,6 @@ evalArgs = mapM eval
     eval (AIdent str) = return (unpack str)
     eval (ASub _) = TODO
 
--- TODO: Not really compatible with pipes atm
 builtin :: Builtin -> Env ()
 builtin = \case
     TCd [] -> getVar "HOME" >>= success . Unix.changeWorkingDirectory
