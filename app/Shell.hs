@@ -6,7 +6,7 @@
 
 module Shell where
 
-import Control.Exception (IOException, catch)
+import Control.Exception (IOException, catch, handle)
 import Control.Monad.Reader (ask, asks, local, runReaderT)
 import Control.Monad.State
 import Control.Monad.Writer
@@ -22,14 +22,17 @@ import System.Directory.Internal (copyHandleData)
 import System.Exit (ExitCode (..), exitSuccess)
 import System.IO
     ( Handle,
+      IOMode (..),
       hClose,
       hFlush,
       hGetContents,
       hPutStr,
+      openFile,
       stderr,
       stdin,
       stdout,
     )
+import System.IO.Error
 import System.Posix qualified as Unix hiding (fdRead)
 import System.Process
 import Types
@@ -162,83 +165,78 @@ interpret = \case
             interpret r
             liftIO $ hClose readEnd
     TRedirection command redirs -> do
-        (readHandles, writeHandles) <-
-            liftIO $
-                splitByMode
-                    <$> redirections redirs
-        inputHandle <- case readHandles of
-            [] -> return Nothing
-            _ -> liftIO $ do
-                (readEnd, writeEnd) <- createPipe
-                let copy' h = copyHandleData h writeEnd >> hClose h
-                mapM_ copy' readHandles
-                hClose writeEnd
-                return (Just readEnd)
-        let updateInputHandle = maybe id (set hstd_in) inputHandle
-            closeInputHandle = maybe (return ()) (liftIO . hClose) inputHandle
-        case writeHandles of
-            [] -> do
-                local updateInputHandle $ do
-                    hs <- interpret command
-                    closeInputHandle
-                    return hs
-            _ -> do
-                (readEnd, writeEnd) <- liftIO createPipe
-                local (set hstd_out writeEnd . updateInputHandle) $ do
-                    hs <- interpret command
-                    closeInputHandle
-                    liftIO $ do
+        liftIO (redirections redirs) >>= \case
+            Left errs -> report errs
+            Right hds -> do
+                let (readHandles, writeHandles) = splitByMode hds
+                inputHandle <- case readHandles of
+                    [] -> return Nothing
+                    _ -> liftIO $ do
+                        (readEnd, writeEnd) <- createPipe
+                        let copy' h = copyHandleData h writeEnd >> hClose h
+                        mapM_ copy' readHandles
                         hClose writeEnd
-                        output <- hGetContents readEnd
-                        mapM_ (\h -> hPutStr h output >> hClose h) writeHandles
-                        hClose readEnd
-                    return hs
+                        return (Just readEnd)
+                let updateInputHandle = maybe id (set hstd_in) inputHandle
+                    closeInputHandle =
+                        maybe
+                            (return ())
+                            (liftIO . hClose)
+                            inputHandle
+                case writeHandles of
+                    [] -> do
+                        local updateInputHandle $ do
+                            hs <- interpret command
+                            closeInputHandle
+                            return hs
+                    _ -> do
+                        (readEnd, writeEnd) <- liftIO createPipe
+                        local (set hstd_out writeEnd . updateInputHandle) $ do
+                            hs <- interpret command
+                            closeInputHandle
+                            liftIO $ do
+                                hClose writeEnd
+                                output <- hGetContents readEnd
+                                mapM_
+                                    (\h -> hPutStr h output >> hClose h)
+                                    writeHandles
+                                hClose readEnd
+                            return hs
 
-redirections :: NonEmpty Redirection -> IO [(Handle, Mode)]
-redirections = mapM redirection . toList
+report :: [Text] -> Env ()
+report = mapM_ (err @())
+
+redirections :: NonEmpty Redirection -> IO (Either [Text] [(Handle, Mode)])
+redirections = fmap esequence . mapM redirection . toList
   where
-    redirection :: Redirection -> IO (Handle, Mode)
+    redirection :: Redirection -> IO (Either Text (Handle, Mode))
     redirection = \case
         Redirection Write (path :| _) -> do
-            fd <-
-                liftIO $
-                    Unix.fdToHandle
-                        =<< Unix.openFd
-                            path
-                            Unix.WriteOnly
-                            ( Unix.defaultFileFlags
-                                { Unix.creat = Just Unix.stdFileMode
-                                , Unix.trunc = True
-                                }
-                            )
-            return (fd, Write)
+            hndl <-
+                handle @IOError
+                    (return . Left . pack . show . flip ioeSetLocation "")
+                    (Right <$> openFile path WriteMode)
+            return ((,Write) <$> hndl)
         Redirection Append (path :| _) -> do
-            fd <-
-                liftIO $
-                    Unix.fdToHandle
-                        =<< Unix.openFd
-                            path
-                            Unix.WriteOnly
-                            ( Unix.defaultFileFlags
-                                { Unix.creat = Just Unix.stdFileMode
-                                , Unix.append = True
-                                }
-                            )
-            return (fd, Append)
+            hndl <-
+                handle @IOError
+                    (return . Left . pack . show . flip ioeSetLocation "")
+                    (Right <$> openFile path AppendMode)
+            return ((,Append) <$> hndl)
         Redirection Read (a :| xs) -> do
             let path = last (a : xs)
-            fd <-
-                liftIO $
-                    Unix.fdToHandle
-                        =<< Unix.openFd path Unix.ReadOnly Unix.defaultFileFlags
-            return (fd, Read)
+            hndl <-
+                handle @IOError
+                    (return . Left . pack . show . flip ioeSetLocation "")
+                    (Right <$> openFile path ReadMode)
+            return ((,Read) <$> hndl)
         Redirection ReadWrite (a :| xs) -> do
             let path = last (a : xs)
-            fd <-
-                liftIO $
-                    Unix.fdToHandle
-                        =<< Unix.openFd path Unix.ReadWrite Unix.defaultFileFlags
-            return (fd, ReadWrite)
+            hndl <-
+                handle @IOError
+                    (return . Left . pack . show . flip ioeSetLocation "")
+                    (Right <$> openFile path ReadWriteMode)
+            return ((,Read) <$> hndl)
 
 external :: External -> Env ()
 external = \case
@@ -250,9 +248,9 @@ external = \case
             catchIO $
                 createProcess
                     ( cmd
-                        { std_in = UseHandle (hs ^. hstd_in)
-                        , std_out = UseHandle (hs ^. hstd_out)
-                        , std_err = UseHandle (hs ^. hstd_err)
+                        { std_in = UseHandle (view hstd_in hs)
+                        , std_out = UseHandle (view hstd_out hs)
+                        , std_err = UseHandle (view hstd_err hs)
                         }
                     )
         case mby of
